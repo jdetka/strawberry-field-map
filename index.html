@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Strawberry Field Map</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <!-- Leaflet Draw for sketching tools -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css" />
+  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+
+  <style>
+    html, body, #map {
+      height: 100%;
+      margin: 0;
+    }
+    .legend {
+      background: white;
+      padding: 10px;
+      line-height: 1.5em;
+      font-size: 14px;
+    }
+    .legend span {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-right: 6px;
+    }
+    #photoInput {
+      display: none;
+    }
+    #downloadBtn {
+      position: absolute;
+      top: 60px;
+      left: 100px;
+      z-index: 1000;
+      background: white;
+      padding: 6px 10px;
+      border: 1px solid #999;
+      font-size: 14px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Hidden photo input for attaching images -->
+<input type="file" id="photoInput" accept="image/*" capture="environment" />
+<!-- Download button -->
+<button id="downloadBtn">Download Notes</button>
+<!-- Map container -->
+<div id="map"></div>
+
+<script>
+  // --- Initialize the map and center on Spence/Old Stage Rd site ---
+  var map = L.map('map').setView([36.626507, -121.538734], 18);
+
+  var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 22,
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  var hexTileLayer = L.tileLayer('./hex_tiles/{z}/{x}/{y}.png', {
+    maxZoom: 22,
+    minZoom: 15,
+    opacity: 0.8,
+    attribution: 'Hexagon Raster Tiles',
+    maxNativeZoom: 22, // adjusts for highest tile zoom
+    tileSize: 256 // standard tile size
+  });
+
+
+  var ndviLayer = L.tileLayer('./ndvi_tiles/{z}/{x}/{y}.png', {
+    maxZoom: 22,
+    minZoom: 15,
+    opacity: 0.6,
+    attribution: 'NDVI Raster'
+  });
+
+  var overlays = {
+    "Hexagons (Raster)": hexTileLayer,
+    "NDVI Layer": ndviLayer
+  };
+
+  var legend = L.control({ position: 'bottomleft' });
+  legend.onAdd = function () {
+    var div = L.DomUtil.create('div', 'legend');
+    div.innerHTML += '<b>Canopy Hotspot Classes</b><br>';
+    div.innerHTML += '<span style="background:#f89d00"></span> Lower Size & Reflectance<br>';
+    div.innerHTML += '<span style="background:#cccccc"></span> Average Size & Reflectance<br>';
+    div.innerHTML += '<span style="background:#01ba04"></span> Higher Size & Reflectance<br>';
+    return div;
+  };
+  legend.addTo(map);
+
+  var locateBtn = L.control({ position: 'topright' });
+  locateBtn.onAdd = function () {
+    var div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+    div.innerHTML = '<a href="#" title="Find Me" style="padding:4px;">📍</a>';
+    div.onclick = function () {
+      map.locate({ setView: true, watch: false });
+    };
+    return div;
+  };
+  locateBtn.addTo(map);
+
+  map.on('locationfound', function (e) {
+    L.circleMarker(e.latlng, {
+      radius: 6,
+      color: 'blue',
+      fillOpacity: 0.7
+    }).addTo(map);
+  });
+
+  var drawnItems = new L.FeatureGroup().addTo(map);
+  var drawControl = new L.Control.Draw({
+    edit: { featureGroup: drawnItems },
+    draw: {
+      polygon: true,
+      polyline: true,
+      marker: true,
+      rectangle: true,
+      circle: false
+    }
+  });
+  map.addControl(drawControl);
+
+  map.on(L.Draw.Event.CREATED, function (e) {
+    var layer = e.layer;
+    drawnItems.addLayer(layer);
+
+    var note = prompt("Enter a note for this " + e.layerType + ":");
+    if (note) {
+      layer.bindPopup(note).openPopup();
+      layer.feature = layer.feature || { type: "Feature", properties: {} };
+      layer.feature.properties.note = note;
+    }
+  });
+
+  map.on('contextmenu', function (e) {
+    var input = document.getElementById('photoInput');
+    input.click();
+
+    input.onchange = function () {
+      var file = input.files[0];
+      var reader = new FileReader();
+      reader.onload = function (event) {
+        var imgURL = event.target.result;
+        var marker = L.marker(e.latlng).addTo(map);
+        marker.bindPopup('<b>Photo:</b><br><img src="' + imgURL + '" width="150">').openPopup();
+      };
+      reader.readAsDataURL(file);
+    };
+  });
+
+  document.getElementById('downloadBtn').addEventListener('click', function () {
+    var data = drawnItems.toGeoJSON();
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'annotations.geojson';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  fetch('treatment_boundaries.geojson')
+    .then(response => response.json())
+    .then(data => {
+      var treatmentLayer = L.geoJSON(data, {
+        style: function(feature) {
+          const treatmentColors = {
+            "Medium": '#ff00ff',
+            "High": '#ff7f0e',
+            "default": '#1f77b4'
+          };
+          const treatmentValue = feature.properties?.treatment;
+          const color = treatmentColors[treatmentValue] || treatmentColors["default"];
+          return {
+            color: color,
+            weight: 2,
+            fill: false
+          };
+        },
+        onEachFeature: function (feature, layer) {
+          var label = feature.properties?.treatment || 'Treatment Boundary';
+          layer.bindPopup(label);
+        }
+      }).addTo(map);
+
+      overlays["Treatment Boundaries"] = treatmentLayer;
+
+      // Now that all overlays are added, initialize the layer control ONCE
+      L.control.layers({ "OpenStreetMap": osm }, overlays, { collapsed: false }).addTo(map);
+    });
+
+  // Add hexTileLayer only after layer control setup
+  hexTileLayer.addTo(map);
+</script>
+
+</body>
+</html>
