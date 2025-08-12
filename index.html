@@ -51,8 +51,8 @@
       left: 100px;
     }
   </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.0/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.0/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 </head>
 <body>
 
@@ -64,11 +64,42 @@
 <script>
   var map = L.map('map').setView([36.626507, -121.538734], 18);
 
+  // --- Basemaps ---
   var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 22,
     attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
+  }); // NOTE: not added by default
 
+  // Esri World Imagery (raster)
+  var esriImagery = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {
+      maxZoom: 22,
+      maxNativeZoom: 19,
+      attribution: 'Imagery © Esri, Maxar, Earthstar Geographics'
+    }
+  );
+
+  // Labels pane on top (click-through)
+  map.createPane('labels');
+  map.getPane('labels').style.zIndex = 650;
+  map.getPane('labels').style.pointerEvents = 'none';
+
+  // Esri reference labels/boundaries
+  var esriLabels = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    {
+      maxZoom: 22,
+      maxNativeZoom: 19,
+      pane: 'labels',
+      attribution: 'Labels © Esri'
+    }
+  );
+
+  // Hybrid group (imagery + labels) as default basemap
+  var esriHybrid = L.layerGroup([esriImagery, esriLabels]).addTo(map);
+
+  // --- Overlays (your tiles) ---
   var hexTileLayer = L.tileLayer('./hex_tiles/{z}/{x}/{y}.png', {
     minZoom: 12,
     maxZoom: 22,
@@ -89,6 +120,7 @@
     "NDVI": ndviLayer
   };
 
+  // Legend
   var legend = L.control({ position: 'bottomleft' });
   legend.onAdd = function () {
     var div = L.DomUtil.create('div', 'legend');
@@ -100,6 +132,7 @@
   };
   legend.addTo(map);
 
+  // Locate button
   var locateBtn = L.control({ position: 'topright' });
   locateBtn.onAdd = function () {
     var div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
@@ -119,6 +152,7 @@
     }).addTo(map);
   });
 
+  // Drawing
   var drawnItems = new L.FeatureGroup().addTo(map);
   var drawControl = new L.Control.Draw({
     edit: { featureGroup: drawnItems },
@@ -144,7 +178,7 @@
     }
   });
 
-  // Add photo point with camera input (cross-platform compatible)
+  // Add photo point
   document.getElementById('addPhotoBtn').addEventListener('click', function () {
     alert("Tap the map where you'd like to add a photo point.");
 
@@ -160,7 +194,6 @@
           var marker = L.marker(e.latlng).addTo(map);
           marker.bindPopup('<b>Photo:</b><br><img src="' + imgURL + '" width="150">').openPopup();
 
-          // Store the image as a data URI in the marker's feature for export
           marker.feature = marker.feature || { type: "Feature", properties: {} };
           marker.feature.properties.image = imgURL;
         };
@@ -169,12 +202,12 @@
     });
   });
 
+  // Download notes + photos
   document.getElementById('downloadBtn').addEventListener('click', function () {
     var zip = new JSZip();
     var allFeatures = drawnItems.toGeoJSON();
     let photoIndex = 1;
 
-    // Include any photo markers manually added to map
     map.eachLayer(function (layer) {
       if (layer.feature && layer.feature.properties.image) {
         const filename = `photo_${photoIndex}.jpg`;
@@ -193,6 +226,7 @@
     });
   });
 
+  // Load treatment boundaries and build layer control
   fetch('treatment_boundaries.geojson')
     .then(response => response.json())
     .then(data => {
@@ -218,9 +252,15 @@
       }).addTo(map);
 
       overlays["Treatment Boundaries"] = treatmentLayer;
-      L.control.layers({ "OpenStreetMap": osm }, overlays, { collapsed: false }).addTo(map);
+
+      var baseMaps = {
+        "Esri World Imagery (Hybrid)": esriHybrid,
+        "OpenStreetMap": osm
+      };
+      L.control.layers(baseMaps, overlays, { collapsed: false }).addTo(map);
     });
 
+  // Turn on your hex tiles by default (optional)
   hexTileLayer.addTo(map);
 </script>
 
